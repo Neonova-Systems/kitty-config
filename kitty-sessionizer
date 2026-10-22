@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# kitty-sessionizer — project session switcher for kitty, replacing tmux-sessionizer.
+# Picks a project directory, writes a kitty session file for it, then switches to
+# that session: focuses it if already open, creates a new tab if not.
+
+set -euo pipefail
+
+SESSION_DIR="${KITTY_SESSION_DIR:-$HOME/.local/share/kitty/sessions}"
+mkdir -p "$SESSION_DIR"
+
+# Open a session file: drive the running kitty if we are inside one,
+# otherwise start a fresh kitty instance on that session.
+open_kitty_session() {
+    local file="$1"
+    if [ -n "${KITTY_WINDOW_ID:-}" ]; then
+        if kitten @ action goto_session "$file" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    kitty --session "$file"
+}
+
+# use the argument if given; otherwise fzf over the project roots
+if [ "$#" -ge 1 ]; then
+    selected="$1"
+else
+    selected=$(fd --min-depth 1 --max-depth 1 --type d --type l . \
+        ~/projects ~/Workspace ~/work ~/personal 2>/dev/null | fzf)
+fi
+
+[ -z "${selected:-}" ] && exit 0
+[ -d "$selected" ] || { echo "Not a directory: $selected" >&2; exit 1; }
+
+selected=$(cd "$selected" && pwd -P)
+selected_name=$(basename "$selected" | tr . _)
+session_file="$SESSION_DIR/$selected_name.kitty-session"
+
+# Rewrite so the session always points at the current path.
+# The explicit `launch` is required: goto_session skips any session whose tab
+# has no explicit launch (it counts windows before adding the implicit shell).
+{
+    printf 'cd %s\n' "$selected"
+    printf 'launch\n'
+} > "$session_file"
+
+open_kitty_session "$session_file"

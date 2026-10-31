@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# kitty-sessions — pick a saved kitty session with fzf and switch to it.
+# Replaces kitty's native session chooser, which goto_session opens when it is
+# given a directory. Focuses the session if it is already open, otherwise
+# creates it.
+
+set -euo pipefail
+
+SESSION_DIR="${KITTY_SESSION_DIR:-$HOME/.local/share/kitty/sessions}"
+SESSION_EXT="kitty-session"
+
+# Open a session file: drive the running kitty if we are inside one,
+# otherwise start a fresh kitty instance on that session.
+open_kitty_session() {
+    local file="$1"
+    if [ -n "${KITTY_WINDOW_ID:-}" ]; then
+        if kitten @ action goto_session "$file" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    kitty --session "$file"
+}
+
+# use the argument if given; otherwise fzf over the saved sessions
+if [ "$#" -ge 1 ]; then
+    file="$1"
+else
+    [ -d "$SESSION_DIR" ] || { echo "No session directory at $SESSION_DIR" >&2; exit 0; }
+    # List bare session names; the preview shows the directory the session will
+    # open in, taken from the `cd` line of the session file. fzf replaces {} with
+    # a single-quoted string, so the placeholder is passed through printf and the
+    # path built around it stays double-quoted: handwriting quotes around {}
+    # makes fzf insert its own quotes as literal characters.
+    export SESSION_DIR
+    selected="$(
+        find "$SESSION_DIR" -maxdepth 1 -type f -name "*.$SESSION_EXT" -printf '%f\n' 2>/dev/null \
+            | sed "s/\.$SESSION_EXT\$//" \
+            | sort \
+            | fzf --prompt="Session> " \
+                  --preview 'sed -n 1p "$SESSION_DIR/$(printf %s {}).kitty-session"' \
+                  --preview-window 'down:1:wrap'
+    )" || exit 0
+    [ -z "${selected:-}" ] && exit 0
+    file="$SESSION_DIR/$selected.$SESSION_EXT"
+fi
+
+[ -z "${file:-}" ] && exit 0
+[ -f "$file" ] || { echo "Not a session file: $file" >&2; exit 1; }
+
+open_kitty_session "$file"

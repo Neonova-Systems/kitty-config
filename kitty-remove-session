@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# kitty-remove-session — delete the kitty session file for the current session,
+# then leave that session: open one plain OS window and close the session's OS
+# window. When run outside a session, it instead offers the saved session files
+# and deletes the one you pick.
+
+set -euo pipefail
+
+SESSION_DIR="${KITTY_SESSION_DIR:-$HOME/.local/share/kitty/sessions}"
+SESSION_EXT="kitty-session"
+
+control() { kitten @ "$@"; }
+
+# Print the session name of the OS window that contains the calling window.
+# The calling window id is KITTY_WINDOW_ID, set by kitty for its children.
+current_session_name() {
+    [ -n "${KITTY_WINDOW_ID:-}" ] || return 0
+    control ls 2>/dev/null | python3 -c '
+import json, sys
+wid = int(sys.argv[1])
+for osw in json.load(sys.stdin):
+    ids = [w["id"] for tab in osw["tabs"] for w in tab["windows"]]
+    if wid not in ids:
+        continue
+    for tab in osw["tabs"]:
+        for w in tab["windows"]:
+            if w.get("session_name"):
+                print(w["session_name"])
+                sys.exit(0)
+    break
+' "$KITTY_WINDOW_ID"
+}
+
+# Leave the current session without losing the terminal: the new window is opened
+# first so kitty does not quit when the session window was the last one.
+# --self targets the OS window of the calling window (the session window), so the
+# result does not depend on which OS window happens to be focused.
+leave_session() {
+    control launch --type=os-window --dont-take-focus >/dev/null 2>&1 || true
+    control action --self close_os_window >/dev/null 2>&1 || true
+}
+
+name="$(current_session_name || true)"
+
+if [ -n "$name" ]; then
+    file="$SESSION_DIR/$name.$SESSION_EXT"
+    if [ ! -f "$file" ]; then
+        echo "No session file at $file" >&2
+        read -r -p "Press enter to close..."
+        exit 1
+    fi
+    rm -f "$file"
+    leave_session
+    exit 0
+fi
+
+# Outside a session: pick a saved session file and delete it.
+file="$(
+    find "$SESSION_DIR" -maxdepth 1 -type f -name "*.$SESSION_EXT" 2>/dev/null \
+        | sort | fzf --prompt="Remove session> "
+)" || exit 0
+[ -z "${file:-}" ] && exit 0
+rm -f "$file"
+echo "Removed $file"

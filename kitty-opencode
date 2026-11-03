@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# kitty-opencode — list the kitty windows that run OpenCode (directly, through
+# opencode-jail/firejail, or via its "OC |" window title) and jump to the one
+# picked with fzf. Matches the window's cmdline, the shell-integration reported
+# cmdline, and the title; the fzf row shows session, directory and title.
+
+set -euo pipefail
+
+control() { kitten @ "$@"; }
+
+json=$(control ls 2>/dev/null) || exit 0
+
+rows=$(
+    printf '%s' "$json" | python3 -c '
+import json, os, sys
+home = os.path.expanduser("~")
+for osw in json.load(sys.stdin):
+    for t in osw.get("tabs", []):
+        for w in t.get("windows", []):
+            cmd = " ".join(w.get("cmdline") or []).lower()
+            rep = " ".join(w.get("last_reported_cmdline") or []).lower()
+            title = w.get("title") or ""
+            if "opencode" not in cmd and "opencode" not in rep and "opencode" not in title.lower() and "oc |" not in title.lower():
+                continue
+            session = w.get("session_name") or "-"
+            cwd = (w.get("cwd") or "-").replace(home, "~", 1)
+            wid = w["id"]
+            print(f"{wid}\t{session}\t{cwd}\t{title}")
+'
+)
+[ -n "${rows:-}" ] || { echo "No OpenCode windows found" >&2; exit 0; }
+
+selection=$(
+    printf '%s\n' "$rows" | fzf \
+        --prompt="OpenCode> " \
+        --header 'enter: jump to window · esc: cancel · ctrl+p/↑: up · ctrl+n/↓: down' \
+        --delimiter $'\t' --with-nth 2,3,4
+) || exit 0
+[ -z "${selection:-}" ] && exit 0
+
+wid=$(printf '%s' "$selection" | awk -F'\t' '{print $1}')
+[ -n "$wid" ] && control focus-window --match "id:$wid" >/dev/null 2>&1

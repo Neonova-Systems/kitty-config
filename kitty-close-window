@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# kitty-close-window — close the active tab (the tmux "window") without letting
+# the session die. With more than one tab in the OS window this just closes the
+# tab. When it is the last tab, one plain OS window is opened first so kitty
+# (and the desktop window) survives; the session file is kept, unlike
+# kitty-remove-session which deletes it.
+#
+# Runs via `launch --type=overlay`, so the process is a child of the calling
+# window: KITTY_LISTEN_ON points at the right kitty instance and KITTY_WINDOW_ID
+# identifies the caller. An overlay shares the caller's tab, so closing the tab
+# that contains $KITTY_WINDOW_ID closes exactly the tab the key was pressed in —
+# independent of OS-window focus state.
+
+set -euo pipefail
+
+control() { kitten @ "$@"; }
+
+[ -n "${KITTY_WINDOW_ID:-}" ] || exit 0
+
+count=$(
+    control ls 2>/dev/null | python3 -c '
+import json, sys
+wid = int(sys.argv[1])
+for osw in json.load(sys.stdin):
+    if any(w["id"] == wid for t in osw.get("tabs", []) for w in t.get("windows", [])):
+        print(len(osw.get("tabs", [])))
+        break
+' "$KITTY_WINDOW_ID"
+) || exit 0
+[ -n "${count:-}" ] || exit 0
+
+if [ "$count" -le 1 ]; then
+    # Last tab: keep a plain kitty window alive before closing this one.
+    control launch --type=os-window --dont-take-focus >/dev/null 2>&1 || true
+fi
+control close-tab --match "id:$KITTY_WINDOW_ID" >/dev/null 2>&1 || true

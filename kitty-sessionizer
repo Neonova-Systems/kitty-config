@@ -25,7 +25,9 @@ if [ "$#" -ge 1 ]; then
     selected="$1"
 else
     selected=$(fd --min-depth 1 --max-depth 1 --type d --type l . \
-        ~/projects ~/Workspace ~/work ~/personal 2>/dev/null | fzf)
+        ~/projects ~/Workspace ~/work ~/personal 2>/dev/null | fzf \
+            --prompt="Project> " \
+            --header 'enter: open project · esc: cancel · ctrl+p/↑: up · ctrl+n/↓: down')
 fi
 
 [ -z "${selected:-}" ] && exit 0

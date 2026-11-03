@@ -21,7 +21,9 @@ open_kitty_session() {
     kitty --session "$file"
 }
 
-project_dir=$(find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -type d | fzf --height 100% --prompt="Project> ")
+project_dir=$(find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -type d | fzf --height 100% \
+    --prompt="Project> " \
+    --header 'enter: pick project · esc: cancel · ctrl+p/↑: up · ctrl+n/↓: down')
 [ -z "${project_dir:-}" ] && exit 0
 project_name=$(basename "$project_dir")
 
@@ -36,7 +38,9 @@ fi
 git worktree prune 2>/dev/null || true
 
 branches=$(git branch --format='%(refname:short)')
-selection=$(printf '%s\n[new branch]\n' "$branches" | fzf --height 100% --prompt="Branch> ")
+selection=$(printf '%s\n[new branch]\n' "$branches" | fzf --height 100% \
+    --prompt="Branch> " \
+    --header 'enter: open worktree · [new branch]: create one · esc: cancel · ctrl+p/↑: up · ctrl+n/↓: down')
 [ -z "${selection:-}" ] && exit 0
 
 if [ "$selection" = "[new branch]" ]; then

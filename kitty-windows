@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# kitty-windows — list windows of current kitty session in fzf and jump to selected.
+# Supports launch as tab or overlay: resolves session name from self window,
+# sibling window (overlay), or previous active tab (tab launch).
+
+set -euo pipefail
+
+control() { kitten @ "$@"; }
+
+json=$(control ls 2>/dev/null) || exit 0
+wid="${KITTY_WINDOW_ID:-}"
+
+parsed=$(
+    printf '%s' "$json" | python3 -c '
+import json, os, sys
+
+data = json.load(sys.stdin)
+self_wid = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else None
+home = os.path.expanduser("~")
+
+self_w = None
+self_tab = None
+self_osw = None
+
+if self_wid is not None:
+    for osw in data:
+        for t in osw.get("tabs", []):
+            for w in t.get("windows", []):
+                if w.get("id") == self_wid:
+                    self_w = w
+                    self_tab = t
+                    self_osw = osw
+                    break
+            if self_w:
+                break
+        if self_w:
+            break
+
+if not self_w:
+    for osw in data:
+        if osw.get("is_focused"):
+            self_osw = osw
+            for t in osw.get("tabs", []):
+                if t.get("is_focused"):
+                    self_tab = t
+                    for w in t.get("windows", []):
+                        if w.get("is_focused"):
+                            self_w = w
+                            self_wid = w.get("id")
+                            break
+
+# 1. Direct terminal run: self has session_name
+sess_name = (self_w.get("session_name") or "") if self_w else ""
+caller_tab_id = self_tab.get("id") if self_tab else None
+
+# 2. Overlay launch: check sibling windows in same tab
+if not sess_name and self_tab:
+    for w in self_tab.get("windows", []):
+        if w.get("id") != self_wid and w.get("session_name"):
+            sess_name = w["session_name"]
+            break
+
+# 3. Tab launch: check previous active tab from history
+if not sess_name and self_osw:
+    hist = self_osw.get("active_tab_history", [])
+    for prev_tab_id in reversed(hist):
+        if prev_tab_id == (self_tab["id"] if self_tab else None):
+            continue
+        for t in self_osw.get("tabs", []):
+            if t.get("id") == prev_tab_id:
+                for w in t.get("windows", []):
+                    if w.get("session_name"):
+                        sess_name = w["session_name"]
+                        break
+            if sess_name:
+                caller_tab_id = prev_tab_id
+                break
+        if sess_name:
+            break
+
+print(sess_name)
+
+osws_to_check = data if sess_name else ([self_osw] if self_osw else data)
+
+tab_num = 0
+for osw in osws_to_check:
+    for tab in osw.get("tabs", []):
+        tab_windows = []
+        for w in tab.get("windows", []):
+            cmdline = " ".join(w.get("cmdline") or [])
+            is_picker = (w.get("id") == self_wid and not (self_w and self_w.get("session_name"))) or ("kitty-windows" in cmdline and w.get("is_self"))
+            if is_picker:
+                continue
+            wsess = w.get("session_name") or ""
+            if sess_name:
+                if wsess != sess_name:
+                    continue
+            else:
+                if wsess:
+                    continue
+            tab_windows.append(w)
+        if not tab_windows:
+            continue
+        tab_num += 1
+        multi = len(tab_windows) > 1
+        for win_idx, w in enumerate(tab_windows, 1):
+            w_id = w["id"]
+            tab_title = (tab.get("title") or "").strip()
+            win_title = (w.get("title") or "").strip()
+            if not tab_title:
+                title = win_title or "-"
+            elif not win_title or tab_title == win_title:
+                title = tab_title
+            elif win_title in ("sh", "zsh", "bash"):
+                title = tab_title
+            else:
+                title = f"{tab_title} ({win_title})"
+
+            cwd = (w.get("cwd") or "-").replace(home, "~", 1)
+            active_mark = "*" if tab.get("id") == caller_tab_id else " "
+            idx_label = f"{tab_num}.{win_idx}" if multi else f"{tab_num}"
+            print(f"{w_id}\t{idx_label}{active_mark}\t{title}\t{cwd}")
+' "$wid"
+)
+
+sess=$(printf '%s\n' "$parsed" | head -n 1)
+rows=$(printf '%s\n' "$parsed" | tail -n +2)
+
+[ -n "${rows:-}" ] || exit 0
+
+prompt="Windows> "
+[ -n "$sess" ] && prompt="Windows [$sess]> "
+
+selection=$(
+    printf '%s\n' "$rows" | fzf \
+        --prompt="$prompt" \
+        --header 'enter/click: jump to window · esc: cancel · ctrl+p/↑: up · ctrl+n/↓: down' \
+        --bind="left-click:accept" \
+        --delimiter $'\t' --with-nth 2,3,4
+) || exit 0
+
+[ -z "${selection:-}" ] && exit 0
+
+target_wid=$(printf '%s' "$selection" | awk -F'\t' '{print $1}')
+[ -n "$target_wid" ] && control focus-window --match "id:$target_wid" >/dev/null 2>&1 || true

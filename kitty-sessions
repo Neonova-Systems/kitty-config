@@ -39,7 +39,7 @@ else
             | fzf --prompt="Session> " \
                   --header 'enter: open session · esc: cancel · ctrl+p/↑: up · ctrl+n/↓: down' \
                   --preview 'sed -n 1p "$SESSION_DIR/$(printf %s {}).kitty-session"' \
-                  --preview-window 'down:1:wrap'
+                  --preview-window 'down:5:wrap'
     )" || exit 0
     [ -z "${selected:-}" ] && exit 0
     file="$SESSION_DIR/$selected.$SESSION_EXT"
